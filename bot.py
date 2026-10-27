@@ -4,12 +4,15 @@ import asyncio
 import logging
 from html import escape
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
+from urllib.parse import urlparse
 
 import edge_tts
 import imageio_ffmpeg
+import yt_dlp
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command, CommandStart
@@ -32,6 +35,13 @@ logger = logging.getLogger("bekiuz_music_bot")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 TTS_VOICE = os.getenv("TTS_VOICE", "uz-UZ-SardorNeural").strip()
 MAX_INPUT_BYTES = int(os.getenv("MAX_INPUT_MB", "8")) * 1024 * 1024
+MAX_DOWNLOAD_BYTES = int(os.getenv("MAX_DOWNLOAD_MB", "35")) * 1024 * 1024
+SUPPORTED_DOMAINS = (
+    "instagram.com", "tiktok.com", "youtube.com", "youtu.be",
+    "facebook.com", "fb.watch", "x.com", "twitter.com", "pinterest.com",
+    "reddit.com", "redd.it", "vimeo.com", "soundcloud.com", "snapchat.com",
+    "threads.net", "capcut.com",
+)
 configured_ffmpeg = os.getenv("FFMPEG_BIN", "").strip()
 # Prefer a system FFmpeg where available; fall back to the portable FFmpeg
 # binary shipped by imageio-ffmpeg for hosts without system packages.
@@ -197,14 +207,12 @@ async def make_processed_audio(bot: Bot, file_id: str, filename: str, mode: str)
 @router.message(CommandStart())
 async def start_handler(message: Message) -> None:
     await message.answer(
-        "🎵 <b>Bekiuz Music Bot</b> ga xush kelibsiz!\n\n"
-        "MP3, WAV, M4A yoki ovozli xabar yuboring. Men uni qayta ishlash uchun "
-        "sizga effekt tanlash imkonini beraman.\n\n"
-        "• <b>BEKIUZ intro + outro</b> — boshida va oxirida chuqur ovoz hamda aks-sado.\n"
-        "• <b>Echo</b> — musiqaga takroriy aks-sado.\n"
-        "• <b>Reverb</b> — kengroq, fazoviy effekt.\n\n"
-        "Hozirgi limit: bitta audio uchun 8 MB (bepul hostingda xotira yetishi uchun).\n"
-        "Qo'shiq havolasini avtomatik yuklab olish bu versiyada yo'q; audio faylni o'zingiz yuklang.",
+        "🎵 <b>Bekiuz Media Bot</b> ga xush kelibsiz!\n\n"
+        "📥 Ochiq Instagram, TikTok, YouTube va boshqa qo‘llab-quvvatlanadigan havolani yuboring.\n"
+        "🎶 Qo‘shiq nomi yoki esingizda qolgan qisqa so‘zlarni yozing — qidiruv natijalarini topaman.\n"
+        "🎧 MP3/WAV/OGG yuboring — BEKIUZ intro + outro, Echo yoki Reverb tanlang.\n\n"
+        "Havoladan yuklash limiti: 35 MB; audio effektlar limiti: 8 MB.\n"
+        "Yopiq, login yoki to‘lov bilan himoyalangan kontent yuklanmaydi.\n"
         parse_mode="HTML",
     )
 
@@ -227,17 +235,152 @@ async def cancel_handler(message: Message) -> None:
     await message.answer("Bekor qilindi. Yangi audio yuborishingiz mumkin.")
 
 
+def extract_url(text: str) -> str | None:
+    match = re.search(r"https?://\S+", text)
+    if not match:
+        return None
+    return match.group(0).rstrip(".,!?)]}>")
+
+
+def is_supported_public_url(url: str) -> bool:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return False
+    host = parsed.hostname.lower().rstrip(".")
+    return any(host == domain or host.endswith("." + domain) for domain in SUPPORTED_DOMAINS)
+
+
+def download_public_media(url: str) -> tuple[str, bytes, str]:
+    """Download one publicly accessible media item, without cookies or login bypass."""
+    with tempfile.TemporaryDirectory(prefix="bekiuz-link-") as temp_dir:
+        folder = Path(temp_dir)
+        options = {
+            "outtmpl": str(folder / "%(id)s.%(ext)s"),
+            "noplaylist": True,
+            "quiet": True,
+            "no_warnings": True,
+            "socket_timeout": 20,
+            "retries": 1,
+            "extractor_retries": 1,
+            "max_filesize": MAX_DOWNLOAD_BYTES,
+            "format": f"best[filesize<{MAX_DOWNLOAD_BYTES}]/best",
+            "ffmpeg_location": FFMPEG_BIN,
+        }
+        try:
+            with yt_dlp.YoutubeDL(options) as downloader:
+                info = downloader.extract_info(url, download=True)
+        except Exception as exc:
+            logger.info("Public media download failed: %s", exc)
+            raise RuntimeError(
+                "Havola ochilmadi. Post ochiq ekanini va platforma login talab qilmasligini tekshiring."
+            ) from exc
+
+        allowed = {".mp4", ".m4v", ".webm", ".mov", ".mp3", ".m4a", ".wav", ".ogg", ".jpg", ".jpeg", ".png", ".webp"}
+        candidates = [
+            item for item in folder.iterdir()
+            if item.is_file() and item.suffix.lower() in allowed and item.stat().st_size > 0
+        ]
+        if not candidates:
+            raise RuntimeError("Havoladan qo‘llab-quvvatlanadigan media fayli topilmadi.")
+
+        media_file = max(candidates, key=lambda item: item.stat().st_mtime)
+        if media_file.stat().st_size > MAX_DOWNLOAD_BYTES:
+            raise RuntimeError(f"Fayl {MAX_DOWNLOAD_BYTES // (1024 * 1024)} MB limitidan katta.")
+
+        title = str((info or {}).get("title") or media_file.stem)
+        return media_file.name, media_file.read_bytes(), title
+
+
+def search_music(query: str) -> list[tuple[str, str]]:
+    """Search YouTube titles by song name or remembered lyric fragment."""
+    options = {
+        "quiet": True,
+        "no_warnings": True,
+        "extract_flat": "in_playlist",
+        "skip_download": True,
+        "playlistend": 5,
+        "socket_timeout": 15,
+    }
+    with yt_dlp.YoutubeDL(options) as searcher:
+        result = searcher.extract_info(f"ytsearch5:{query}", download=False)
+    matches: list[tuple[str, str]] = []
+    for entry in (result or {}).get("entries") or []:
+        if not entry:
+            continue
+        title = str(entry.get("title") or "Nomsiz video")
+        link = entry.get("webpage_url") or entry.get("original_url") or entry.get("url") or ""
+        if link and not str(link).startswith(("http://", "https://")):
+            link = f"https://www.youtube.com/watch?v={link}"
+        if link:
+            matches.append((title, str(link)))
+    return matches
+
+
+async def send_search_results(message: Message, query: str) -> None:
+    query = query.strip()
+    if not query:
+        await message.answer("Qidirish uchun qo‘shiq nomi yoki esingizda qolgan qisqa so‘zlarni yozing.")
+        return
+    if len(query) > 180:
+        await message.answer("Qidiruv matni juda uzun. Qo‘shiq nomi yoki qisqa parchani yuboring.")
+        return
+    status = await message.answer("🔎 Qo‘shiq qidirilyapti…")
+    try:
+        results = await asyncio.to_thread(search_music, query)
+        if not results:
+            await status.edit_text("Mos natija topilmadi. Boshqa so‘zlar bilan urinib ko‘ring.")
+            return
+        lines = [f"🎵 Qidiruv natijalari: {query}", ""]
+        for index, (title, link) in enumerate(results, 1):
+            lines.append(f"{index}. {title}\n{link}")
+        await status.edit_text("\n".join(lines), disable_web_page_preview=True)
+    except Exception:
+        logger.exception("Song search failed")
+        await status.edit_text("Qidiruv vaqtincha ishlamadi. Birozdan keyin yana urinib ko‘ring.")
+
+
+@router.message(Command("search", "song"))
+async def search_command(message: Message) -> None:
+    query = (message.text or "").partition(" ")[2].strip()
+    await send_search_results(message, query)
+
+
 @router.message(F.text)
 async def text_handler(message: Message) -> None:
-    text = message.text or ""
-    lowered = text.lower()
-    if "suno.com/" in lowered:
-        await message.answer(
-            "🎵 Suno havolasini bevosita yuklab olish bu botda qo‘llanmaydi.\n\n"
-            "Suno’da qo‘shiqni Library yoki Workspace’dan oching → ⋯ → Download → MP3. "
-            "Yuklangan MP3 faylni shu botga yuboring — keyin BEKIUZ intro + outro, Echo yoki Reverb tanlaysiz.\n\n"
-            "Rasmiy ko‘rsatma: https://help.suno.com/en/articles/2409921"
-        )
+    text = (message.text or "").strip()
+    if not text or text.startswith("/"):
+        return
+
+    url = extract_url(text)
+    if url:
+        if "suno.com/" in url.lower():
+            await message.answer(
+                "Suno havolasidan to‘g‘ridan-to‘g‘ri olish bu botda qo‘llanmaydi. "
+                "Suno ruxsat bergan Download → MP3 usulidan foydalaning."
+            )
+            return
+        if not is_supported_public_url(url):
+            await message.answer(
+                "Bu platforma hozir qo‘llab-quvvatlanmaydi. Ochiq Instagram, TikTok, YouTube, "
+                "Facebook, X, Pinterest, Reddit, Vimeo yoki SoundCloud havolasini yuboring."
+            )
+            return
+
+        status = await message.answer("📥 Ochiq havoladagi media tekshirilmoqda…")
+        try:
+            filename, media_bytes, title = await asyncio.to_thread(download_public_media, url)
+            await status.edit_text(f"✅ Topildi: {title}\nFayl yuborilyapti…")
+            await message.answer_document(
+                document=BufferedInputFile(media_bytes, filename=filename),
+                caption=f"📥 {title[:700]}\n\nBekiuz Media",
+            )
+            await status.delete()
+        except Exception as exc:
+            logger.exception("Link download failed")
+            await status.edit_text(f"❌ {str(exc)[:500]}")
+        return
+
+    await send_search_results(message, text)
 
 
 @router.message(F.audio | F.voice | F.document)
