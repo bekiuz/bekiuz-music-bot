@@ -73,15 +73,16 @@ You can also set `BOT_TOKEN` directly as an environment variable if you prefer. 
 3. Choose **BEKIUZ intro + outro**, **Echo**, or **Reverb**.
 4. Download the returned MP3.
 
-## Free Python hosting (Silly Development)
+## Deploy to FadeHost (free first bot)
 
-The Railway account used during setup reported that its trial had expired, so no Railway deployment was created. This repo is prepared for a small Python hosting service that supports persistent long-polling bots.
+[![Deploy to FadeHost](https://fadehost.com/deploy-button.svg)](https://laplace.fadehost.com/register?intent=bot&repo=https://github.com/bekiuz/bekiuz-music-bot&name=bekiuz-music-bot)
 
-1. Create an account at [Silly Development](https://sillydev.co.uk/). Its current free plan advertises 25% CPU, 256 MB RAM, 512 MB disk, no card, and no idle sleep, but it does not provide an uptime guarantee.
-2. Create a free Python server in the hosting panel.
-3. Upload the repository's files (download the ZIP from GitHub and upload/extract it, or use SFTP). Do not upload a real `.env` file.
-4. Set `BOT_TOKEN` in the panel's environment variables. Use a fresh token from BotFather: a token shared in a chat should be revoked first.
-5. Set the entry file/start command to `bot.py`, then start the server.
-6. Check the live console. Send `/start` to your Telegram bot and upload an audio file up to 8 MB for a test.
+FadeHost currently advertises one free bot per verified account, 256 MB RAM, 0.25 vCPU, 3 GB disk, and no credit card. A Telegram bot using polling and no web address stays awake on the free plan. The account may need an occasional confirmation in the hosting panel, and the free plan has a 1 GB/day traffic limit.
 
-This small free plan is best for testing. Audio processing may be slow or exceed available memory for larger tracks. Keep a backup of your code locally/GitHub; free hosting can be interrupted.
+1. Open the deploy button above and verify your email if asked.
+2. Choose your own repository: `https://github.com/bekiuz/bekiuz-music-bot`, branch `main`.
+3. Set the start command to `python bot.py` if the panel does not detect it automatically. Build command: `pip install -r requirements.txt`.
+4. In the environment variables/secret field, set `BOT_TOKEN` to a fresh token from BotFather. Do not use the token previously pasted into chat; revoke it first in BotFather and create a new one.
+5. Deploy, then inspect the live console for `Bekiuz Music Bot ishga tushmoqda.` and send `/start` in Telegram.
+
+The bot processes user-uploaded audio files (8 MB default) and returns MP3 results. FFmpeg is bundled through `imageio-ffmpeg`. This is a small free instance, so audio effects may take time or hit memory limits for larger files. Keep your code on GitHub and treat the hosting plan's resources and uptime as limited.
