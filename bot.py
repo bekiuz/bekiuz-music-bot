@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 
 import edge_tts
+import imageio_ffmpeg
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command, CommandStart
@@ -30,8 +31,11 @@ logger = logging.getLogger("bekiuz_music_bot")
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 TTS_VOICE = os.getenv("TTS_VOICE", "uz-UZ-SardorNeural").strip()
-MAX_INPUT_BYTES = int(os.getenv("MAX_INPUT_MB", "20")) * 1024 * 1024
-FFMPEG_BIN = os.getenv("FFMPEG_BIN", "ffmpeg")
+MAX_INPUT_BYTES = int(os.getenv("MAX_INPUT_MB", "8")) * 1024 * 1024
+configured_ffmpeg = os.getenv("FFMPEG_BIN", "").strip()
+# Prefer a system FFmpeg where available; fall back to the portable FFmpeg
+# binary shipped by imageio-ffmpeg for hosts without system packages.
+FFMPEG_BIN = configured_ffmpeg or shutil.which("ffmpeg") or imageio_ffmpeg.get_ffmpeg_exe()
 
 router = Router()
 
@@ -88,7 +92,7 @@ async def create_bekiuz_tag(destination: Path) -> None:
 
 async def run_ffmpeg(args: list[str]) -> None:
     if not shutil.which(FFMPEG_BIN):
-        raise RuntimeError("FFmpeg topilmadi. Hosting Dockerfile orqali ishga tushirilganini tekshiring.")
+        raise RuntimeError("FFmpeg topilmadi. imageio-ffmpeg paketi o‘rnatilganini tekshiring.")
 
     process = await asyncio.create_subprocess_exec(
         FFMPEG_BIN,
@@ -199,7 +203,7 @@ async def start_handler(message: Message) -> None:
         "• <b>BEKIUZ intro + outro</b> — boshida va oxirida chuqur ovoz hamda aks-sado.\n"
         "• <b>Echo</b> — musiqaga takroriy aks-sado.\n"
         "• <b>Reverb</b> — kengroq, fazoviy effekt.\n\n"
-        "Hozirgi limit: bitta audio uchun 20 MB.\n"
+        "Hozirgi limit: bitta audio uchun 8 MB (bepul hostingda xotira yetishi uchun).\n"
         "Qo'shiq havolasini avtomatik yuklab olish bu versiyada yo'q; audio faylni o'zingiz yuklang.",
         parse_mode="HTML",
     )
