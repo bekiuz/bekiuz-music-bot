@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from html import escape
 import os
 import shutil
 import tempfile
 from pathlib import Path
 
 import edge_tts
+from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
@@ -17,6 +19,8 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
+
+load_dotenv()
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -236,7 +240,7 @@ async def audio_handler(message: Message) -> None:
 
     pending_media[message.from_user.id] = (file_id, filename)
     await message.answer(
-        f"✅ <b>{filename}</b> qabul qilindi. Qaysi effektni qo'shay?",
+        f"✅ <b>{escape(filename)}</b> qabul qilindi. Qaysi effektni qo'shay?",
         reply_markup=get_keyboard(),
         parse_mode="HTML",
     )
