@@ -13,7 +13,8 @@ Telegram bot that processes **audio files uploaded by the user** and returns an 
 ## Important limitations
 
 - This first version processes audio files that users upload to the bot. It does **not** download tracks from Suno share links or bypass any platform's download restrictions.
-- Maximum input file size is 20 MB with the standard Telegram Bot API download endpoint.
+- The default input file size is limited to 8 MB to reduce out-of-memory risk on small free hosts. You can change `MAX_INPUT_MB`, but raising it may exceed the host's memory limit.
+- FFmpeg uses the system binary when available and otherwise the portable binary included by `imageio-ffmpeg`. Audio processing can be slow on small free instances.
 - The BEKIUZ spoken tag uses Microsoft Edge text-to-speech through `edge-tts`. It needs internet access. The default voice is `uz-UZ-SardorNeural`; if that voice is unavailable in the runtime, set `TTS_VOICE` to an available Edge TTS voice.
 - Audio quality and the exact pronunciation/echo tail can vary depending on the source track and selected voice.
 
@@ -72,6 +73,15 @@ You can also set `BOT_TOKEN` directly as an environment variable if you prefer. 
 3. Choose **BEKIUZ intro + outro**, **Echo**, or **Reverb**.
 4. Download the returned MP3.
 
-## Hosting
+## Free Python hosting (Silly Development)
 
-Deploy the repository as a Docker service and add `BOT_TOKEN` (plus optional voice/settings) in the host's secret environment-variable settings. Use a host that supports a persistent, always-running worker; a static website host cannot run this bot.
+The Railway account used during setup reported that its trial had expired, so no Railway deployment was created. This repo is prepared for a small Python hosting service that supports persistent long-polling bots.
+
+1. Create an account at [Silly Development](https://sillydev.co.uk/). Its current free plan advertises 25% CPU, 256 MB RAM, 512 MB disk, no card, and no idle sleep, but it does not provide an uptime guarantee.
+2. Create a free Python server in the hosting panel.
+3. Upload the repository's files (download the ZIP from GitHub and upload/extract it, or use SFTP). Do not upload a real `.env` file.
+4. Set `BOT_TOKEN` in the panel's environment variables. Use a fresh token from BotFather: a token shared in a chat should be revoked first.
+5. Set the entry file/start command to `bot.py`, then start the server.
+6. Check the live console. Send `/start` to your Telegram bot and upload an audio file up to 8 MB for a test.
+
+This small free plan is best for testing. Audio processing may be slow or exceed available memory for larger tracks. Keep a backup of your code locally/GitHub; free hosting can be interrupted.
