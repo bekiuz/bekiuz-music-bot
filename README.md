@@ -61,16 +61,9 @@ pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-Edit `.env` and fill in `BOT_TOKEN`, then run the bot. Set environment variables in your terminal or load the local `.env` using your preferred environment manager. The code intentionally does not auto-load `.env` to avoid adding another dependency.
+Edit `.env` and fill in `BOT_TOKEN`, then run the bot with `python bot.py`. The code loads this local file automatically. The `.env` file is ignored by Git and is not copied into the Docker image.
 
-To load `.env` without changing the code, install `python-dotenv` locally and run with your environment manager, or set the variables directly in PowerShell:
-
-```powershell
-$env:BOT_TOKEN = "YOUR_TOKEN_HERE"
-python bot.py
-```
-
-Keep the token private; do not paste the example command containing your real token into public chats or screenshots.
+You can also set `BOT_TOKEN` directly as an environment variable if you prefer. Keep the token private; do not paste it into public chats or screenshots.
 
 ## Usage
 
