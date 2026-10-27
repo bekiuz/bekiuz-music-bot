@@ -471,6 +471,8 @@ async def send_search_results(message: Message, query: str) -> None:
     status = await message.answer("🔎 Qo‘shiq qidirilyapti…")
     try:
         results = await asyncio.to_thread(search_music, query)
+        if message.from_user:
+            await asyncio.to_thread(record_history, message.from_user.id, "search", query)
         if not results:
             await status.edit_text("Mos natija topilmadi. Boshqa so‘zlar bilan urinib ko‘ring.")
             return
@@ -485,6 +487,9 @@ async def send_search_results(message: Message, query: str) -> None:
 
 @router.message(Command("search", "song"))
 async def search_command(message: Message) -> None:
+    if message.from_user and is_rate_limited(message.from_user.id):
+        await message.answer("Biroz kuting — so‘rovlar orasida 3 soniya tanaffus bo‘lishi kerak.")
+        return
     query = (message.text or "").partition(" ")[2].strip()
     await send_search_results(message, query)
 
@@ -521,9 +526,9 @@ async def text_handler(message: Message) -> None:
                 document=BufferedInputFile(media_bytes, filename=filename),
                 caption=f"📥 {title[:650]}\n\n✅ Bekiuz Bot orqali yuklab olindi",
             )
-            await status.delete()
             if message.from_user:
                 await asyncio.to_thread(record_history, message.from_user.id, "download", title)
+            await status.delete()
         except Exception as exc:
             logger.exception("Link download failed")
             await status.edit_text(f"❌ {str(exc)[:500]}")
@@ -546,7 +551,7 @@ async def audio_handler(message: Message) -> None:
 
     if message.video:
         video_file_id = message.video.file_id
-        video_filename = message.video.file_name or "video.mp4"
+        video_filename = getattr(message.video, "file_name", None) or "video.mp4"
         video_size = message.video.file_size or 0
     elif message.document:
         item = message.document
