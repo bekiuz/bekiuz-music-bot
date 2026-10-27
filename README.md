@@ -6,6 +6,8 @@ Telegram bot for public media links, song search, video tools, and audio effects
 
 - Attempts to download a single media item from supported **public** Instagram, TikTok, YouTube, Facebook, X/Twitter, Pinterest, Reddit, Vimeo, SoundCloud, Snapchat, Threads, and CapCut links.
 - Searches up to five YouTube results when the user sends a song name or a short remembered lyric fragment.
+- Shows Uzbekistan's current popular YouTube music-category videos with `/top10`, using the official YouTube Data API.
+- Users can opt in to a daily TOP 10 message at 09:00 Tashkent time with `/daily_on` and opt out with `/daily_off`.
 - Extracts MP3 audio from a video uploaded to Telegram.
 - Compresses uploaded videos with FFmpeg (resizes wide videos to at most 1280 pixels and re-encodes them).
 - Adds a spoken BEKIUZ intro/outro, Echo, or a Reverb-like effect to uploaded audio.
@@ -20,12 +22,15 @@ Telegram bot for public media links, song search, video tools, and audio effects
 - Suno share links are not downloaded directly. Use a download/export option that Suno makes available for that track, then upload the exported audio file.
 - Public link downloads are limited to 35 MB by default (`MAX_DOWNLOAD_MB`); uploaded video inputs are limited to 18 MB (`MAX_VIDEO_MB`); audio inputs for effects are limited to 8 MB (`MAX_INPUT_MB`). Free host RAM and Telegram file limits may be lower.
 - Song search uses YouTube search results; it does not identify a song from audio. Exact music recognition would require a separate recognition API.
+- Daily TOP 10 requires a Google Cloud API key with YouTube Data API v3 enabled. The list contains popular music-category videos for Uzbekistan, not a guarantee of the official daily song chart. The bot sends links to listen and does not redistribute the songs as MP3 files.
 - Video compression depends on the FFmpeg build supporting `libx264`. On small free hosts, processing can take time or hit memory limits.
 - BEKIUZ spoken tag generation uses `edge-tts` and requires internet access.
 
 ## Environment variables
 
 - `BOT_TOKEN` — required Telegram bot token.
+- `YOUTUBE_API_KEY` — required for `/top10` and daily chart subscriptions.
+- `YOUTUBE_REGION` — optional two-letter region code (default `UZ`).
 - `TTS_VOICE` — optional voice (default `uz-UZ-SardorNeural`).
 - `MAX_INPUT_MB` — optional audio processing input limit (default 8).
 - `MAX_DOWNLOAD_MB` — optional public link download limit (default 35).
@@ -64,5 +69,8 @@ python main.py
 - Upload a video — choose **Videodan MP3 ajratish** or **Videoni siqish**.
 - Upload audio — choose **BEKIUZ intro + outro**, **Echo**, or **Reverb**.
 - `/search <query>` — explicit song search.
+- `/top10` — current YouTube popular music videos for Uzbekistan.
+- `/daily_on` — opt in to daily TOP 10 at 09:00 Tashkent time.
+- `/daily_off` — turn daily TOP 10 messages off.
 - `/history` — last 10 personal actions.
 - `/cancel` — clear the pending audio/video selection.
