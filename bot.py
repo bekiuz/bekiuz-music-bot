@@ -336,13 +336,13 @@ async def start_handler(message: Message) -> None:
 @router.message(Command("help"))
 async def help_handler(message: Message) -> None:
     await message.answer(
-        "Foydalanish:\\n"
-        "• Ochiq media havolasini yuboring — yuklab olishga urinaman.\\n"
-        "• Qo‘shiq nomi yoki qisqa parchani yozing — qidiruv natijalari.\\n"
-        "• Audio yuboring va BEKIUZ, Echo yoki Reverb tanlang.\\n"
-        "• Video yuboring va MP3 ajratish yoki siqishni tanlang.\\n\\n"
-        "/search nom yoki qisqa matn — qidiruv.\\n"
-        "/history — oxirgi 10 ta amal.\\n"
+        "Foydalanish:\n"
+        "• Ochiq media havolasini yuboring — yuklab olishga urinaman.\n"
+        "• Qo‘shiq nomi yoki qisqa parchani yozing — qidiruv natijalari.\n"
+        "• Audio yuboring va BEKIUZ, Echo yoki Reverb tanlang.\n"
+        "• Video yuboring va MP3 ajratish yoki siqishni tanlang.\n\n"
+        "/search nom yoki qisqa matn — qidiruv.\n"
+        "/history — oxirgi 10 ta amal.\n"
         "/cancel — tanlangan faylni bekor qilish."
     )
 
@@ -368,7 +368,7 @@ async def history_handler(message: Message) -> None:
     for action, title, created_at in rows:
         lines.append(f"{labels.get(action, action)} — {escape(title)}")
         lines.append(f"<i>{created_at} UTC</i>")
-    await message.answer("\\n".join(lines), parse_mode="HTML")
+    await message.answer("\n".join(lines), parse_mode="HTML")
 
 
 @router.message(Command("cancel"))
@@ -660,13 +660,13 @@ async def effect_handler(callback: CallbackQuery) -> None:
         await callback.message.answer_audio(
             audio=BufferedInputFile(audio_bytes, filename="bekiuz-mix.mp3"),
             title="BEKIUZ Mix",
-            caption=f"{caption}\\n✅ Bekiuz Bot orqali tayyorlandi",
+            caption=f"{caption}\n✅ Bekiuz Bot orqali tayyorlandi",
         )
         await asyncio.to_thread(record_history, user_id, f"audio_{mode}", filename)
     except Exception as exc:
         logger.exception("Audio processing failed for user %s", user_id)
         await callback.message.answer(
-            "❌ Audio tayyorlashda xatolik bo‘ldi. Faylni yana yuborib ko‘ring.\\n"
+            "❌ Audio tayyorlashda xatolik bo‘ldi. Faylni yana yuborib ko‘ring.\n"
             f"Sabab: {str(exc)[:300]}"
         )
     finally:
