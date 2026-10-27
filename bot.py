@@ -373,7 +373,7 @@ async def text_handler(message: Message) -> None:
             await status.edit_text(f"✅ Topildi: {title}\nFayl yuborilyapti…")
             await message.answer_document(
                 document=BufferedInputFile(media_bytes, filename=filename),
-                caption=f"📥 {title[:700]}\n\nBekiuz Media",
+                caption=f"📥 {title[:650]}\n\n✅ Bekiuz Bot orqali yuklab olindi",
             )
             await status.delete()
         except Exception as exc:
