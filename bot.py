@@ -212,7 +212,7 @@ async def start_handler(message: Message) -> None:
         "🎶 Qo‘shiq nomi yoki esingizda qolgan qisqa so‘zlarni yozing — qidiruv natijalarini topaman.\n"
         "🎧 MP3/WAV/OGG yuboring — BEKIUZ intro + outro, Echo yoki Reverb tanlang.\n\n"
         "Havoladan yuklash limiti: 35 MB; audio effektlar limiti: 8 MB.\n"
-        "Yopiq, login yoki to‘lov bilan himoyalangan kontent yuklanmaydi.\n"
+        "Yopiq, login yoki to‘lov bilan himoyalangan kontent yuklanmaydi.\n",
         parse_mode="HTML",
     )
 
@@ -221,10 +221,11 @@ async def start_handler(message: Message) -> None:
 async def help_handler(message: Message) -> None:
     await message.answer(
         "Foydalanish:\n"
-        "1. Audio faylni botga yuboring.\n"
-        "2. Kerakli effekt tugmasini bosing.\n"
-        "3. Tayyor MP3 faylni yuklab oling.\n\n"
-        "Yangi audio yuborsangiz, boshqa effekt tanlashingiz mumkin. Bekor qilish uchun /cancel yozing."
+        "• Ochiq ijtimoiy tarmoq havolasini yuboring — media yuklashga urinaman.\n"
+        "• Qo‘shiq nomi yoki qisqa parchani yozing — qidiruv natijalarini ko‘rsataman.\n"
+        "• Audio fayl yuboring va BEKIUZ, Echo yoki Reverb effektini tanlang.\n\n"
+        "/search qo‘shiq nomi — qidiruv.\n/cancel — tanlangan audioni bekor qilish.\n"
+        "Yopiq yoki login talab qiladigan havolalar yuklanmaydi."
     )
 
 
