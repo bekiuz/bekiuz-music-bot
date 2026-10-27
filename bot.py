@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+from datetime import datetime, timedelta
 from html import escape
 import os
 import re
@@ -10,7 +12,9 @@ import sqlite3
 import tempfile
 import time
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
+from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
 import edge_tts
 import imageio_ffmpeg
@@ -35,6 +39,9 @@ logging.basicConfig(
 logger = logging.getLogger("bekiuz_music_bot")
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "").strip()
+YOUTUBE_REGION = os.getenv("YOUTUBE_REGION", "UZ").strip().upper()[:2] or "UZ"
+BOT_TIMEZONE = ZoneInfo("Asia/Tashkent")
 TTS_VOICE = os.getenv("TTS_VOICE", "uz-UZ-SardorNeural").strip()
 MAX_INPUT_BYTES = int(os.getenv("MAX_INPUT_MB", "8")) * 1024 * 1024
 MAX_DOWNLOAD_BYTES = int(os.getenv("MAX_DOWNLOAD_MB", "35")) * 1024 * 1024
@@ -118,6 +125,97 @@ def read_history(user_id: int, limit: int = 10) -> list[tuple[str, str, str]]:
             "WHERE user_id = ? ORDER BY id DESC LIMIT ?",
             (user_id, limit),
         ).fetchall()
+
+
+def set_daily_subscription(user_id: int, enabled: bool) -> None:
+    with sqlite3.connect(HISTORY_DB) as connection:
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS daily_subscribers ("
+            "user_id INTEGER PRIMARY KEY, subscribed_at TEXT NOT NULL)"
+        )
+        if enabled:
+            connection.execute(
+                "INSERT OR IGNORE INTO daily_subscribers(user_id, subscribed_at) VALUES (?, ?)",
+                (user_id, datetime.now(BOT_TIMEZONE).isoformat(timespec="seconds")),
+            )
+        else:
+            connection.execute("DELETE FROM daily_subscribers WHERE user_id = ?", (user_id,))
+
+
+def get_daily_subscribers() -> list[int]:
+    with sqlite3.connect(HISTORY_DB) as connection:
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS daily_subscribers ("
+            "user_id INTEGER PRIMARY KEY, subscribed_at TEXT NOT NULL)"
+        )
+        return [row[0] for row in connection.execute("SELECT user_id FROM daily_subscribers").fetchall()]
+
+
+def fetch_youtube_top10() -> list[dict[str, str]]:
+    """Return the current popular music-category videos in the configured country."""
+    if not YOUTUBE_API_KEY:
+        raise RuntimeError(
+            "YouTube API kaliti sozlanmagan. Hostingga YOUTUBE_API_KEY o‘zgaruvchisini qo‘shish kerak."
+        )
+    params = urlencode({
+        "part": "snippet,statistics",
+        "chart": "mostPopular",
+        "regionCode": YOUTUBE_REGION,
+        "videoCategoryId": "10",
+        "maxResults": "10",
+        "key": YOUTUBE_API_KEY,
+    })
+    request = Request(
+        f"https://www.googleapis.com/youtube/v3/videos?{params}",
+        headers={"Accept": "application/json", "User-Agent": "BekiuzMediaBot/1.0"},
+    )
+    try:
+        with urlopen(request, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        logger.warning("YouTube chart request failed: %s", exc)
+        raise RuntimeError(
+            "YouTube TOP 10 ma’lumotini olib bo‘lmadi. API kaliti va limitini tekshiring."
+        ) from exc
+
+    result: list[dict[str, str]] = []
+    for item in payload.get("items", []):
+        video_id = item.get("id")
+        snippet = item.get("snippet") or {}
+        if not video_id:
+            continue
+        stats = item.get("statistics") or {}
+        result.append({
+            "title": str(snippet.get("title") or "Nomsiz video"),
+            "channel": str(snippet.get("channelTitle") or "Noma’lum kanal"),
+            "url": f"https://www.youtube.com/watch?v={video_id}",
+            "views": str(stats.get("viewCount") or ""),
+        })
+    if not result:
+        raise RuntimeError("O‘zbekiston uchun YouTube musiqa chartidan hozir natija kelmadi.")
+    return result[:10]
+
+
+def format_youtube_top10(items: list[dict[str, str]]) -> str:
+    today = datetime.now(BOT_TIMEZONE).strftime("%d.%m.%Y")
+    lines = [
+        f"🎵 <b>YouTube musiqa TOP 10 — O‘zbekiston</b>",
+        f"📅 {today}",
+        "",
+    ]
+    for index, item in enumerate(items, 1):
+        title = escape(item["title"])
+        channel = escape(item["channel"])
+        url = escape(item["url"], quote=True)
+        lines.append(f'{index}. <a href="{url}">{title}</a>')
+        lines.append(f"   🎤 {channel}")
+    lines.extend([
+        "",
+        "🎧 Tinglash uchun nomini bosing.",
+        "ℹ️ Bu YouTube’ning musiqa toifasidagi mashhur videolari; reyting o‘zgarib turadi.",
+        "📥 Yuklab olishni faqat muallif yoki platforma ruxsat bergan usulda bajaring.",
+    ])
+    return "\\n".join(lines)
 
 
 def get_video_keyboard() -> InlineKeyboardMarkup:
@@ -345,6 +443,47 @@ async def help_handler(message: Message) -> None:
         "/history — oxirgi 10 ta amal.\n"
         "/cancel — tanlangan faylni bekor qilish."
     )
+
+
+@router.message(Command("top10"))
+async def top10_handler(message: Message) -> None:
+    status = await message.answer("🎵 O‘zbekiston bo‘yicha YouTube musiqa TOP 10 olinmoqda…")
+    try:
+        items = await asyncio.to_thread(fetch_youtube_top10)
+        await status.edit_text(
+            format_youtube_top10(items),
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+        if message.from_user:
+            await asyncio.to_thread(record_history, message.from_user.id, "top10", "YouTube music chart")
+    except Exception as exc:
+        await status.edit_text(f"❌ {escape(str(exc)[:350])}")
+
+
+@router.message(Command("daily_on"))
+async def daily_on_handler(message: Message) -> None:
+    if not message.from_user:
+        return
+    if not YOUTUBE_API_KEY:
+        await message.answer(
+            "Kunlik TOP 10 uchun hostingda YOUTUBE_API_KEY sozlanishi kerak. "
+            "API kalitini menga yubormang — faqat hostingdagi maxfiy Environment o‘zgaruvchisiga kiriting."
+        )
+        return
+    await asyncio.to_thread(set_daily_subscription, message.from_user.id, True)
+    await message.answer(
+        "✅ Obuna yoqildi! Har kuni soat 09:00 da (Toshkent vaqti) YouTube musiqa TOP 10 havolalarini yuboraman.\n"
+        "To‘xtatish: /daily_off"
+    )
+
+
+@router.message(Command("daily_off"))
+async def daily_off_handler(message: Message) -> None:
+    if not message.from_user:
+        return
+    await asyncio.to_thread(set_daily_subscription, message.from_user.id, False)
+    await message.answer("🔕 Kunlik TOP 10 xabarlari o‘chirildi.")
 
 
 @router.message(Command("history"))
@@ -678,6 +817,35 @@ async def effect_handler(callback: CallbackQuery) -> None:
         pending_media.pop(user_id, None)
 
 
+async def daily_top10_loop(bot: Bot) -> None:
+    """Send the chart to users who explicitly opted in, every day at 09:00 Tashkent."""
+    while True:
+        now = datetime.now(BOT_TIMEZONE)
+        next_run = now.replace(hour=9, minute=0, second=0, microsecond=0)
+        if next_run <= now:
+            next_run += timedelta(days=1)
+        await asyncio.sleep(max(1, (next_run - now).total_seconds()))
+
+        try:
+            subscribers = await asyncio.to_thread(get_daily_subscribers)
+            if not subscribers:
+                continue
+            items = await asyncio.to_thread(fetch_youtube_top10)
+            text = format_youtube_top10(items)
+            for user_id in subscribers:
+                try:
+                    await bot.send_message(
+                        user_id,
+                        text,
+                        parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    logger.exception("Daily chart send failed for user %s", user_id)
+        except Exception:
+            logger.exception("Daily YouTube top 10 job failed")
+
+
 async def main() -> None:
     if not BOT_TOKEN:
         raise RuntimeError(
@@ -691,9 +859,15 @@ async def main() -> None:
     dispatcher.include_router(router)
 
     logger.info("Bekiuz Music Bot ishga tushmoqda.")
+    scheduler_task = asyncio.create_task(daily_top10_loop(bot))
     try:
         await dispatcher.start_polling(bot)
     finally:
+        scheduler_task.cancel()
+        try:
+            await scheduler_task
+        except asyncio.CancelledError:
+            pass
         await bot.session.close()
 
 
