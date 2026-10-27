@@ -227,6 +227,19 @@ async def cancel_handler(message: Message) -> None:
     await message.answer("Bekor qilindi. Yangi audio yuborishingiz mumkin.")
 
 
+@router.message(F.text)
+async def text_handler(message: Message) -> None:
+    text = message.text or ""
+    lowered = text.lower()
+    if "suno.com/" in lowered:
+        await message.answer(
+            "🎵 Suno havolasini bevosita yuklab olish bu botda qo‘llanmaydi.\n\n"
+            "Suno’da qo‘shiqni Library yoki Workspace’dan oching → ⋯ → Download → MP3. "
+            "Yuklangan MP3 faylni shu botga yuboring — keyin BEKIUZ intro + outro, Echo yoki Reverb tanlaysiz.\n\n"
+            "Rasmiy ko‘rsatma: https://help.suno.com/en/articles/2409921"
+        )
+
+
 @router.message(F.audio | F.voice | F.document)
 async def audio_handler(message: Message) -> None:
     if not message.from_user:
