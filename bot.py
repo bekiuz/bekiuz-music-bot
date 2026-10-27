@@ -215,7 +215,7 @@ def format_youtube_top10(items: list[dict[str, str]]) -> str:
         "ℹ️ Bu YouTube’ning musiqa toifasidagi mashhur videolari; reyting o‘zgarib turadi.",
         "📥 Yuklab olishni faqat muallif yoki platforma ruxsat bergan usulda bajaring.",
     ])
-    return "\\n".join(lines)
+    return "\n".join(lines)
 
 
 def get_video_keyboard() -> InlineKeyboardMarkup:
@@ -424,7 +424,10 @@ async def start_handler(message: Message) -> None:
         "🎶 Qo‘shiq nomi yoki qisqa so‘zlarini yozing — qidiruv natijalarini topaman.\n"
         "🎧 Audio yuboring — BEKIUZ intro + outro, Echo yoki Reverb.\n"
         "🎬 Video yuboring — MP3 ajratish yoki videoni siqish.\n"
-        "🕘 /history — oxirgi ishlaringiz.\n\n"
+        "🕘 /history — oxirgi ishlaringiz.\n"
+        "🔥 /top10 — YouTube musiqa TOP 10.\n"
+        "🔔 /daily_on — kunlik TOP 10 xabarlariga obuna.\n"
+        "🔕 /daily_off — kunlik xabarlarni o‘chirish.\n\n"
         "Havola limiti: 35 MB; audio: 8 MB; video: 18 MB.\n"
         "Faqat ochiq va ruxsat etilgan kontent.\n",
         parse_mode="HTML",
@@ -441,6 +444,9 @@ async def help_handler(message: Message) -> None:
         "• Video yuboring va MP3 ajratish yoki siqishni tanlang.\n\n"
         "/search nom yoki qisqa matn — qidiruv.\n"
         "/history — oxirgi 10 ta amal.\n"
+        "/top10 — hozirgi YouTube musiqa TOP 10.\n"
+        "/daily_on — har kungi TOP 10 xabarlari.\n"
+        "/daily_off — kunlik xabarlarni o‘chirish.\n"
         "/cancel — tanlangan faylni bekor qilish."
     )
 
