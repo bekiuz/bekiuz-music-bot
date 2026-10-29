@@ -111,7 +111,7 @@ def get_promo_keyboard() -> InlineKeyboardMarkup:
                 ),
                 InlineKeyboardButton(
                     text="📢 Kanalga qo‘shish",
-                    url=f"{bot_url}?startchannel=true",
+                    url=f"{bot_url}?startchannel",
                 ),
             ],
         ]
@@ -667,7 +667,7 @@ async def send_downloaded_media(message: Message, filename: str, media_bytes: by
     markup = get_media_actions_keyboard() if is_video else get_promo_keyboard()
     upload = BufferedInputFile(media_bytes, filename=filename)
 
-    if suffix in {".jpg", ".jpeg", ".png", ".webp"} and len(media_bytes) <= 10 * 1024 * 1024:
+    if suffix in {".jpg", ".jpeg", ".png"} and len(media_bytes) <= 10 * 1024 * 1024:
         sent = await message.answer_photo(photo=upload, caption=caption, reply_markup=markup)
     elif suffix in {".mp4", ".m4v"}:
         sent = await message.answer_video(
