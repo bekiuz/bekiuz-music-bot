@@ -39,6 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger("bekiuz_music_bot")
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+BOT_USERNAME = ""
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "").strip()
 YOUTUBE_REGION = os.getenv("YOUTUBE_REGION", "UZ").strip().upper()[:2] or "UZ"
 BOT_TIMEZONE = ZoneInfo("Asia/Tashkent")
@@ -61,6 +62,8 @@ router = Router()
 # One pending upload per user; it is held only in memory and is not stored permanently.
 pending_media: dict[int, tuple[str, str]] = {}
 pending_video: dict[int, tuple[str, str]] = {}
+pending_media_titles: dict[tuple[int, int], str] = {}
+search_sessions: dict[int, tuple[str, list[tuple[str, str]], int]] = {}
 last_request_at: dict[int, float] = {}
 VIDEO_SUFFIXES = {".mp4", ".m4v", ".mov", ".webm", ".avi", ".mkv"}
 MAX_VIDEO_BYTES = int(os.getenv("MAX_VIDEO_MB", "18")) * 1024 * 1024
@@ -81,6 +84,79 @@ def get_keyboard() -> InlineKeyboardMarkup:
             ],
         ]
     )
+
+
+def get_promo_keyboard() -> InlineKeyboardMarkup:
+    """Share the bot or open Telegram's add-to-group/channel flow."""
+    if not BOT_USERNAME:
+        share_url = "https://t.me/share/url?" + urlencode(
+            {"text": "Bekiuz Media Bot — media va qo‘shiqlar qidiruvi"}
+        )
+        return InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="↗️ Botni ulashish", url=share_url)]]
+        )
+
+    bot_url = f"https://t.me/{BOT_USERNAME}"
+    share_url = "https://t.me/share/url?" + urlencode({
+        "url": bot_url,
+        "text": "Bekiuz Media Bot — YouTube, Instagram media va qo‘shiqlar qidiruvi",
+    })
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="↗️ Botni ulashish", url=share_url)],
+            [
+                InlineKeyboardButton(
+                    text="➕ Guruhga qo‘shish",
+                    url=f"{bot_url}?startgroup=true",
+                ),
+                InlineKeyboardButton(
+                    text="📢 Kanalga qo‘shish",
+                    url=f"{bot_url}?startchannel=true",
+                ),
+            ],
+        ]
+    )
+
+
+def get_media_actions_keyboard() -> InlineKeyboardMarkup:
+    promo_rows = get_promo_keyboard().inline_keyboard
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🎵 Musiqasini qidirish", callback_data="media:music")],
+            *promo_rows,
+        ]
+    )
+
+
+def get_search_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    session = search_sessions.get(user_id)
+    if session is None:
+        return InlineKeyboardMarkup(inline_keyboard=[])
+
+    _, results, offset = session
+    rows: list[list[InlineKeyboardButton]] = []
+    page_end = min(offset + 10, len(results))
+    for index in range(offset, page_end, 5):
+        rows.append([
+            InlineKeyboardButton(
+                text=str(item_index - offset + 1),
+                callback_data=f"song:{item_index}",
+            )
+            for item_index in range(index, min(index + 5, page_end))
+        ])
+
+    navigation: list[InlineKeyboardButton] = []
+    if offset > 0:
+        navigation.append(
+            InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"songpage:{max(0, offset - 10)}")
+        )
+    if page_end < len(results):
+        navigation.append(
+            InlineKeyboardButton(text="Keyingisi ➡️", callback_data=f"songpage:{page_end}")
+        )
+    if navigation:
+        rows.append(navigation)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def is_rate_limited(user_id: int) -> bool:
@@ -420,8 +496,8 @@ async def make_processed_audio(bot: Bot, file_id: str, filename: str, mode: str)
 async def start_handler(message: Message) -> None:
     await message.answer(
         "🎵 <b>Bekiuz Media Bot</b> ga xush kelibsiz!\n\n"
-        "📥 Ochiq ijtimoiy tarmoq havolasini yuboring — media yuklashga urinaman.\n"
-        "🎶 Qo‘shiq nomi yoki qisqa so‘zlarini yozing — qidiruv natijalarini topaman.\n"
+        "📥 YouTube va ochiq Instagram havolasini yuboring — video, rasm yoki audio yuklab olaman.\n"
+        "🎶 Qo‘shiq nomini yozing — 1–10 natijadan birini tanlab MP3 yuklab oling.\n"
         "🎧 Audio yuboring — BEKIUZ intro + outro, Echo yoki Reverb.\n"
         "🎬 Video yuboring — MP3 ajratish yoki videoni siqish.\n"
         "🕘 /history — oxirgi ishlaringiz.\n"
@@ -429,8 +505,9 @@ async def start_handler(message: Message) -> None:
         "🔔 /daily_on — kunlik TOP 10 xabarlariga obuna.\n"
         "🔕 /daily_off — kunlik xabarlarni o‘chirish.\n\n"
         "Havola limiti: 35 MB; audio: 8 MB; video: 18 MB.\n"
-        "Faqat ochiq va ruxsat etilgan kontent.\n",
+        "Faqat ochiq va yuklab olishga ruxsat berilgan kontent.\n",
         parse_mode="HTML",
+        reply_markup=get_promo_keyboard(),
     )
 
 
@@ -438,8 +515,9 @@ async def start_handler(message: Message) -> None:
 async def help_handler(message: Message) -> None:
     await message.answer(
         "Foydalanish:\n"
-        "• Ochiq media havolasini yuboring — yuklab olishga urinaman.\n"
-        "• Qo‘shiq nomi yoki qisqa parchani yozing — qidiruv natijalari.\n"
+        "• Ochiq YouTube yoki Instagram havolasini yuboring — video/rasm yuklab olaman.\n"
+        "• Qo‘shiq nomini yozing — 1–10 natijadan raqamni bosing, MP3 yuboriladi.\n"
+        "• Keyingi 10 ta natija uchun “Keyingisi” tugmasini bosing.\n"
         "• Audio yuboring va BEKIUZ, Echo yoki Reverb tanlang.\n"
         "• Video yuboring va MP3 ajratish yoki siqishni tanlang.\n\n"
         "/search nom yoki qisqa matn — qidiruv.\n"
@@ -447,7 +525,8 @@ async def help_handler(message: Message) -> None:
         "/top10 — hozirgi YouTube musiqa TOP 10.\n"
         "/daily_on — har kungi TOP 10 xabarlari.\n"
         "/daily_off — kunlik xabarlarni o‘chirish.\n"
-        "/cancel — tanlangan faylni bekor qilish."
+        "/cancel — tanlangan faylni bekor qilish.",
+        reply_markup=get_promo_keyboard(),
     )
 
 
@@ -580,18 +659,99 @@ def download_public_media(url: str) -> tuple[str, bytes, str]:
         return media_file.name, media_file.read_bytes(), title
 
 
-def search_music(query: str) -> list[tuple[str, str]]:
-    """Search YouTube titles by song name or remembered lyric fragment."""
+async def send_downloaded_media(message: Message, filename: str, media_bytes: bytes, title: str) -> None:
+    """Send images, videos, or audio in their native Telegram media type where possible."""
+    suffix = Path(filename).suffix.lower()
+    caption = f"📥 {title[:700]}\n\n✅ Bekiuz Bot orqali yuklab olindi"
+    is_video = suffix in VIDEO_SUFFIXES
+    markup = get_media_actions_keyboard() if is_video else get_promo_keyboard()
+    upload = BufferedInputFile(media_bytes, filename=filename)
+
+    if suffix in {".jpg", ".jpeg", ".png", ".webp"} and len(media_bytes) <= 10 * 1024 * 1024:
+        sent = await message.answer_photo(photo=upload, caption=caption, reply_markup=markup)
+    elif suffix in {".mp4", ".m4v"}:
+        sent = await message.answer_video(
+            video=upload,
+            caption=caption,
+            reply_markup=markup,
+            supports_streaming=True,
+        )
+    elif suffix in {".mp3", ".m4a", ".ogg", ".wav"}:
+        sent = await message.answer_audio(
+            audio=upload,
+            title=title[:64],
+            caption=caption,
+            reply_markup=markup,
+        )
+    else:
+        sent = await message.answer_document(
+            document=upload,
+            caption=caption,
+            reply_markup=markup,
+        )
+
+    if is_video:
+        pending_media_titles[(sent.chat.id, sent.message_id)] = title[:180]
+        if len(pending_media_titles) > 500:
+            pending_media_titles.pop(next(iter(pending_media_titles)))
+
+
+def download_song_mp3(url: str) -> tuple[bytes, str]:
+    """Download a selected public YouTube result and convert its audio to MP3."""
+    with tempfile.TemporaryDirectory(prefix="bekiuz-song-") as temp_dir:
+        folder = Path(temp_dir)
+        options = {
+            "outtmpl": str(folder / "%(id)s.%(ext)s"),
+            "noplaylist": True,
+            "quiet": True,
+            "no_warnings": True,
+            "socket_timeout": 30,
+            "retries": 1,
+            "extractor_retries": 1,
+            "max_filesize": MAX_DOWNLOAD_BYTES,
+            "format": "bestaudio/best",
+            "ffmpeg_location": FFMPEG_BIN,
+            "postprocessors": [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            }],
+        }
+        try:
+            with yt_dlp.YoutubeDL(options) as downloader:
+                info = downloader.extract_info(url, download=True)
+        except Exception as exc:
+            logger.info("Song MP3 download failed: %s", exc)
+            raise RuntimeError(
+                "Bu qo‘shiqni MP3 qilib olib bo‘lmadi. Boshqa natijani tanlang yoki keyinroq urinib ko‘ring."
+            ) from exc
+
+        candidates = [
+            item for item in folder.iterdir()
+            if item.is_file() and item.suffix.lower() == ".mp3" and item.stat().st_size > 0
+        ]
+        if not candidates:
+            raise RuntimeError("MP3 fayl yaratilmadi. Serverda FFmpeg borligini tekshiring.")
+        audio_file = max(candidates, key=lambda item: item.stat().st_mtime)
+        if audio_file.stat().st_size > 45 * 1024 * 1024:
+            raise RuntimeError("MP3 Telegram yuborish limiti uchun juda katta.")
+        title = str((info or {}).get("title") or audio_file.stem)
+        return audio_file.read_bytes(), title
+
+
+def search_music(query: str, limit: int = 20) -> list[tuple[str, str]]:
+    """Search up to 20 YouTube results; display the results ten at a time."""
     options = {
         "quiet": True,
         "no_warnings": True,
         "extract_flat": "in_playlist",
         "skip_download": True,
-        "playlistend": 5,
-        "socket_timeout": 15,
+        "playlistend": limit,
+        "socket_timeout": 20,
     }
     with yt_dlp.YoutubeDL(options) as searcher:
-        result = searcher.extract_info(f"ytsearch5:{query}", download=False)
+        result = searcher.extract_info(f"ytsearch{limit}:{query}", download=False)
+
     matches: list[tuple[str, str]] = []
     for entry in (result or {}).get("entries") or []:
         if not entry:
@@ -605,29 +765,131 @@ def search_music(query: str) -> list[tuple[str, str]]:
     return matches
 
 
-async def send_search_results(message: Message, query: str) -> None:
+async def send_search_results(message: Message, query: str, user_id: int | None = None) -> None:
     query = query.strip()
     if not query:
         await message.answer("Qidirish uchun qo‘shiq nomi yoki esingizda qolgan qisqa so‘zlarni yozing.")
         return
-    if len(query) > 180:
-        await message.answer("Qidiruv matni juda uzun. Qo‘shiq nomi yoki qisqa parchani yuboring.")
+    query = query[:180]
+
+    if user_id is None and message.from_user:
+        user_id = message.from_user.id
+    if user_id is None:
+        await message.answer("Qidiruvni shaxsiy chatda boshlang.")
         return
-    status = await message.answer("🔎 Qo‘shiq qidirilyapti…")
+
+    status = await message.answer("🔎 YouTube’dan qo‘shiqlar qidirilyapti…")
     try:
         results = await asyncio.to_thread(search_music, query)
-        if message.from_user:
-            await asyncio.to_thread(record_history, message.from_user.id, "search", query)
         if not results:
             await status.edit_text("Mos natija topilmadi. Boshqa so‘zlar bilan urinib ko‘ring.")
             return
-        lines = [f"🎵 Qidiruv natijalari: {query}", ""]
-        for index, (title, link) in enumerate(results, 1):
-            lines.append(f"{index}. {title}\n{link}")
-        await status.edit_text("\n".join(lines), disable_web_page_preview=True)
+
+        search_sessions[user_id] = (query, results, 0)
+        if len(search_sessions) > 500:
+            search_sessions.pop(next(iter(search_sessions)))
+        if message.from_user and message.from_user.id == user_id:
+            await asyncio.to_thread(record_history, user_id, "search", query)
+
+        lines = [f"🎵 Qo‘shiq qidiruvi: {query}", ""]
+        for index, (title, _) in enumerate(results[:10], 1):
+            lines.append(f"{index}. {title[:150]}")
+        lines.extend(["", "⬇️ MP3 yuklash uchun raqamni bosing."])
+        await status.edit_text(
+            "\n".join(lines),
+            reply_markup=get_search_keyboard(user_id),
+            disable_web_page_preview=True,
+        )
     except Exception:
         logger.exception("Song search failed")
         await status.edit_text("Qidiruv vaqtincha ishlamadi. Birozdan keyin yana urinib ko‘ring.")
+
+
+@router.callback_query(F.data == "media:music")
+async def media_music_search_handler(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    title = pending_media_titles.get((callback.message.chat.id, callback.message.message_id))
+    if not title:
+        await callback.answer("Bu video uchun qidiruv ma’lumoti topilmadi.", show_alert=True)
+        return
+    await callback.answer("Video nomi asosida musiqa qidiriladi")
+    await send_search_results(callback.message, title, user_id=callback.from_user.id)
+
+
+@router.callback_query(F.data.startswith("songpage:"))
+async def song_page_handler(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    session = search_sessions.get(callback.from_user.id)
+    if not session:
+        await callback.answer("Avval qo‘shiq qidiring.", show_alert=True)
+        return
+
+    query, results, _ = session
+    try:
+        offset = int((callback.data or "").split(":", 1)[1])
+    except (TypeError, ValueError):
+        await callback.answer("Sahifa raqami noto‘g‘ri.", show_alert=True)
+        return
+    if offset < 0 or offset >= len(results):
+        await callback.answer("Boshqa natija yo‘q.", show_alert=True)
+        return
+
+    search_sessions[callback.from_user.id] = (query, results, offset)
+    lines = [f"🎵 Qo‘shiq qidiruvi: {query}", ""]
+    page = results[offset:offset + 10]
+    for index, (title, _) in enumerate(page, 1):
+        lines.append(f"{index}. {title[:150]}")
+    lines.extend(["", "⬇️ MP3 yuklash uchun raqamni bosing."])
+    await callback.answer()
+    await callback.message.edit_text(
+        "\n".join(lines),
+        reply_markup=get_search_keyboard(callback.from_user.id),
+        disable_web_page_preview=True,
+    )
+
+
+@router.callback_query(F.data.startswith("song:"))
+async def song_download_handler(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    session = search_sessions.get(callback.from_user.id)
+    if not session:
+        await callback.answer("Avval qo‘shiq qidiring.", show_alert=True)
+        return
+
+    _, results, offset = session
+    try:
+        index = int((callback.data or "").split(":", 1)[1])
+    except (TypeError, ValueError):
+        await callback.answer("Natija raqami noto‘g‘ri.", show_alert=True)
+        return
+    if index < offset or index >= min(offset + 10, len(results)):
+        await callback.answer("Bu tugma eskirgan. Qayta qidiring.", show_alert=True)
+        return
+
+    title, url = results[index]
+    await callback.answer("MP3 tayyorlanmoqda…")
+    await callback.message.edit_text(f"⏳ MP3 tayyorlanmoqda: {title[:180]}")
+    try:
+        audio_bytes, downloaded_title = await asyncio.to_thread(download_song_mp3, url)
+        safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", downloaded_title).strip("._-")[:60]
+        filename = (safe_name or "bekiuz-song") + ".mp3"
+        await callback.message.answer_audio(
+            audio=BufferedInputFile(audio_bytes, filename=filename),
+            title=downloaded_title[:64],
+            caption=f"🎵 {downloaded_title[:700]}\n✅ Bekiuz Bot orqali yuklab olindi",
+            reply_markup=get_promo_keyboard(),
+        )
+        await asyncio.to_thread(record_history, callback.from_user.id, "download", downloaded_title)
+        await callback.message.edit_text(f"✅ MP3 yuborildi: {downloaded_title[:180]}")
+    except Exception as exc:
+        logger.exception("Song MP3 download failed for user %s", callback.from_user.id)
+        await callback.message.edit_text(f"❌ {str(exc)[:400]}")
 
 
 @router.message(Command("search", "song"))
@@ -666,11 +928,8 @@ async def text_handler(message: Message) -> None:
         status = await message.answer("📥 Ochiq havoladagi media tekshirilmoqda…")
         try:
             filename, media_bytes, title = await asyncio.to_thread(download_public_media, url)
-            await status.edit_text(f"✅ Topildi: {title}\nFayl yuborilyapti…")
-            await message.answer_document(
-                document=BufferedInputFile(media_bytes, filename=filename),
-                caption=f"📥 {title[:650]}\n\n✅ Bekiuz Bot orqali yuklab olindi",
-            )
+            await status.edit_text(f"✅ Topildi: {title[:180]}\nMedia yuborilyapti…")
+            await send_downloaded_media(message, filename, media_bytes, title)
             if message.from_user:
                 await asyncio.to_thread(record_history, message.from_user.id, "download", title)
             await status.delete()
@@ -864,7 +1123,10 @@ async def main() -> None:
     dispatcher = Dispatcher()
     dispatcher.include_router(router)
 
-    logger.info("Bekiuz Music Bot ishga tushmoqda.")
+    global BOT_USERNAME
+    me = await bot.get_me()
+    BOT_USERNAME = me.username or ""
+    logger.info("Bekiuz Music Bot ishga tushmoqda (@%s).", BOT_USERNAME or "username-yo‘q")
     scheduler_task = asyncio.create_task(daily_top10_loop(bot))
     try:
         await dispatcher.start_polling(bot)
