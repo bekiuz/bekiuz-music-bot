@@ -6,6 +6,7 @@ import logging
 from datetime import datetime, timedelta
 from html import escape
 import os
+import platform
 import re
 import shutil
 import sqlite3
@@ -512,6 +513,55 @@ async def start_handler(message: Message) -> None:
     )
 
 
+@router.message(Command("diag"))
+async def diagnostics_handler(message: Message) -> None:
+    """Report deployment facts that commonly explain why YouTube audio fails."""
+    try:
+        ytdlp_version = yt_dlp.version.__version__
+    except Exception:
+        ytdlp_version = "noma’lum"
+
+    try:
+        ejs_version = __import__("importlib.metadata", fromlist=["version"]).version("yt-dlp-ejs")
+    except Exception:
+        ejs_version = "o‘rnatilmagan"
+
+    deno_path = shutil.which("deno")
+    node_path = shutil.which("node")
+    node_version = "yo‘q"
+    if node_path:
+        try:
+            node_result = subprocess.run(
+                [node_path, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
+            )
+            if node_result.returncode == 0:
+                node_version = node_result.stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            node_version = "ishga tushmadi"
+
+    ffmpeg_path = shutil.which(FFMPEG_BIN) or (FFMPEG_BIN if Path(FFMPEG_BIN).is_file() else None)
+    lines = [
+        "🔎 <b>Bekiuz Music Bot diagnostikasi</b>",
+        f"Python: {platform.python_version()}",
+        f"yt-dlp: {ytdlp_version}",
+        f"yt-dlp-ejs: {ejs_version}",
+        f"Deno: {deno_path or 'topilmadi'}",
+        f"Node.js: {node_version}",
+        f"FFmpeg: {ffmpeg_path or 'topilmadi'}",
+    ]
+    if not deno_path and node_version == "yo‘q":
+        lines.extend([
+            "",
+            "⚠️ YouTube yuklash uchun hostingda Deno yoki Node.js 22+ kerak.",
+            "requirements.txt yangilangandan so‘ng paketlarni qayta o‘rnating.",
+        ])
+    await message.answer("\n".join(lines), parse_mode="HTML")
+
+
 @router.message(Command("help"))
 async def help_handler(message: Message) -> None:
     await message.answer(
@@ -526,7 +576,8 @@ async def help_handler(message: Message) -> None:
         "/top10 — hozirgi YouTube musiqa TOP 10.\n"
         "/daily_on — har kungi TOP 10 xabarlari.\n"
         "/daily_off — kunlik xabarlarni o‘chirish.\n"
-        "/cancel — tanlangan faylni bekor qilish.",
+        "/cancel — tanlangan faylni bekor qilish.\n"
+        "/diag — YouTube yuklash muhiti tekshiruvi.",
         reply_markup=get_promo_keyboard(),
     )
 
@@ -619,6 +670,30 @@ def is_supported_public_url(url: str) -> bool:
     return any(host == domain or host.endswith("." + domain) for domain in SUPPORTED_DOMAINS)
 
 
+def youtube_runtime_options() -> dict[str, object]:
+    """Enable a supported JavaScript runtime when the host provides one."""
+    deno_path = shutil.which("deno")
+    if deno_path:
+        return {"js_runtimes": {"deno": {"path": deno_path}}}
+
+    node_path = shutil.which("node")
+    if node_path:
+        try:
+            result = subprocess.run(
+                [node_path, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
+            )
+            match = re.search(r"(?:v)?(\d+)\.", result.stdout.strip())
+            if result.returncode == 0 and match and int(match.group(1)) >= 22:
+                return {"js_runtimes": {"node": {"path": node_path}}}
+        except (OSError, subprocess.SubprocessError):
+            logger.debug("Could not inspect Node.js runtime", exc_info=True)
+    return {}
+
+
 def download_public_media(url: str) -> tuple[str, bytes, str]:
     """Download one publicly accessible media item, without cookies or login bypass."""
     with tempfile.TemporaryDirectory(prefix="bekiuz-link-") as temp_dir:
@@ -634,6 +709,7 @@ def download_public_media(url: str) -> tuple[str, bytes, str]:
             "max_filesize": MAX_DOWNLOAD_BYTES,
             "format": f"best[filesize<{MAX_DOWNLOAD_BYTES}]/best",
             "ffmpeg_location": FFMPEG_BIN,
+            **youtube_runtime_options(),
         }
         try:
             with yt_dlp.YoutubeDL(options) as downloader:
@@ -711,6 +787,7 @@ def download_song_mp3(url: str) -> tuple[bytes, str]:
             "extractor_retries": 2,
             "max_filesize": MAX_DOWNLOAD_BYTES,
             "format": "bestaudio/best",
+            **youtube_runtime_options(),
         }
 
         try:
@@ -787,6 +864,7 @@ def search_music(query: str, limit: int = 20) -> list[tuple[str, str]]:
         "skip_download": True,
         "playlistend": limit,
         "socket_timeout": 20,
+        **youtube_runtime_options(),
     }
     with yt_dlp.YoutubeDL(options) as searcher:
         result = searcher.extract_info(f"ytsearch{limit}:{query}", download=False)
