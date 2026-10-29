@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import sqlite3
+import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -697,7 +698,7 @@ async def send_downloaded_media(message: Message, filename: str, media_bytes: by
 
 
 def download_song_mp3(url: str) -> tuple[bytes, str]:
-    """Download a selected public YouTube result and convert its audio to MP3."""
+    """Download a selected public YouTube result, then convert its audio to MP3."""
     with tempfile.TemporaryDirectory(prefix="bekiuz-song-") as temp_dir:
         folder = Path(temp_dir)
         options = {
@@ -706,37 +707,75 @@ def download_song_mp3(url: str) -> tuple[bytes, str]:
             "quiet": True,
             "no_warnings": True,
             "socket_timeout": 30,
-            "retries": 1,
-            "extractor_retries": 1,
+            "retries": 2,
+            "extractor_retries": 2,
             "max_filesize": MAX_DOWNLOAD_BYTES,
             "format": "bestaudio/best",
-            "ffmpeg_location": FFMPEG_BIN,
-            "postprocessors": [{
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "192",
-            }],
         }
+
         try:
             with yt_dlp.YoutubeDL(options) as downloader:
                 info = downloader.extract_info(url, download=True)
         except Exception as exc:
-            logger.info("Song MP3 download failed: %s", exc)
+            logger.exception("yt-dlp could not download selected song")
+            detail = str(exc).replace("\n", " ")[:240]
             raise RuntimeError(
-                "Bu qo‘shiqni MP3 qilib olib bo‘lmadi. Boshqa natijani tanlang yoki keyinroq urinib ko‘ring."
+                f"YouTube audiosini olishda xato ({type(exc).__name__}): {detail}"
             ) from exc
 
-        candidates = [
+        source_candidates = [
             item for item in folder.iterdir()
-            if item.is_file() and item.suffix.lower() == ".mp3" and item.stat().st_size > 0
+            if item.is_file()
+            and item.suffix.lower() in {
+                ".webm", ".m4a", ".mp4", ".opus", ".aac", ".ogg",
+                ".wav", ".flac", ".mp3",
+            }
+            and item.stat().st_size > 0
         ]
-        if not candidates:
-            raise RuntimeError("MP3 fayl yaratilmadi. Serverda FFmpeg borligini tekshiring.")
-        audio_file = max(candidates, key=lambda item: item.stat().st_mtime)
-        if audio_file.stat().st_size > 45 * 1024 * 1024:
+        if not source_candidates:
+            raise RuntimeError(
+                "YouTube audio fayli yuklanmadi. Bot hostingidagi yt-dlp versiyasini yangilang."
+            )
+
+        source = max(source_candidates, key=lambda item: item.stat().st_mtime)
+        output = folder / f"{source.stem}.mp3"
+        try:
+            converted = subprocess.run(
+                [
+                    FFMPEG_BIN,
+                    "-hide_banner", "-loglevel", "error", "-y",
+                    "-i", str(source), "-map", "0:a:0", "-vn",
+                    "-codec:a", "libmp3lame", "-b:a", "192k",
+                    "-ar", "44100", "-ac", "2",
+                    str(output),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=180,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                "FFmpeg topilmadi. Hosting sozlamasida FFMPEG_BIN ni tekshiring."
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                "MP3 konvertatsiyasi 3 daqiqadan oshdi. Qisqaroq qo‘shiqni tanlang."
+            ) from exc
+
+        if converted.returncode != 0:
+            detail = (converted.stderr or "Noma’lum FFmpeg xatosi").strip()[-260:]
+            logger.error("FFmpeg song conversion failed: %s", detail)
+            raise RuntimeError(f"Audio MP3 ga aylantirilmadi: {detail}")
+
+        if not output.exists() or output.stat().st_size == 0:
+            raise RuntimeError("MP3 fayli yaratilmadi. Boshqa natijani tanlab ko‘ring.")
+        if output.stat().st_size > 45 * 1024 * 1024:
             raise RuntimeError("MP3 Telegram yuborish limiti uchun juda katta.")
-        title = str((info or {}).get("title") or audio_file.stem)
-        return audio_file.read_bytes(), title
+
+        title = str((info or {}).get("title") or source.stem)
+        return output.read_bytes(), title
 
 
 def search_music(query: str, limit: int = 20) -> list[tuple[str, str]]:
